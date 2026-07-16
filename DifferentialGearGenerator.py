@@ -303,7 +303,9 @@ def cpattern(linecenter, esconico, ra, rf, z, diente, esStdr, anchoeng, newComp,
         ci.quantity    = adsk.core.ValueInput.createByReal(z)
         ci.totalAngle  = adsk.core.ValueInput.createByString('360 deg')
         ci.isSymmetric = False
-        ci.patternComputeOption = 1 if u == 'Cut' else 0
+        # Always use Adjust (1) — Identical (0) fails for the first component
+        # in a fresh design because it needs pre-existing history to reference.
+        ci.patternComputeOption = 1
         cf.add(ci)
     except Exception:
         pass   # cpattern failed silently
@@ -559,53 +561,144 @@ def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
     except Exception: pass
 
     if assembled:
-        # ── ASSEMBLED MODE: correct differential layout ───────────────────────────
-        # All apices meet at (0,0,0).
-        # SideGears: ±Z  |  SpiderGears: ±X
-        # RingGear:  +Z (larger than SideGear, wraps around it)
-        # DrivePinion: +Y (perpendicular to both ring and spider axes)
-        pcx_s_cm  = _puntocon_x(m, z_side,   z_spider)
-        pcx_sp_cm = _puntocon_x(m, z_spider, z_side)
+        # ── ASSEMBLED MODE — exact GFGearGenerator NC8 positioning ───────────
+        # SpiderGear = NC8 "pinion" (gear 2):  rotcon only
+        # SideGear   = NC8 "wheel"  (gear 1):  moveAndRotateBevel formula
+        # SpiderGear_2 / SideGear_L = 180° mirror around Y at differential center
+        # GFGearGenerator also hides existing bodies before each build to prevent
+        # body-index interference in combine/cpattern — we do the same.
 
-        def make_assembled(name, build_fn, rot_angle, rot_axis, pcx):
+        aconico_s  = mt.atan(float(z_side)   / float(z_spider))
+        aconico_sp = mt.atan(float(z_spider) / float(z_side))
+
+        # NC8 gear-1 (wheel = SideGear) translation formula — direct from NC8 handler
+        tx_s = (ra_sp + ra_s)/10.0 + (
+               (rp_s - 1.25*m*mt.cos(aconico_s)) - rf_s*mt.cos(aconico_s))/10.0
+        tz_s = -rf_s * mt.sin(aconico_s) / 10.0
+
+        # Differential center ≈ rotcon center of SpiderGear
+        cx = rf_sp / 10.0   # cm
+
+        def _hide_all():
+            """Hide all bodies across all existing occurrences (GFGearGenerator pattern)."""
+            hidden = []
+            for j in range(root.occurrences.count):
+                for k in range(root.occurrences.item(j).bRepBodies.count):
+                    b = root.occurrences.item(j).bRepBodies.item(k)
+                    if b.isVisible:
+                        hidden.append(b)
+                        try: b.isVisible = False
+                        except: pass
+            return hidden
+
+        def _show_all(hidden):
+            for b in hidden:
+                try: b.isVisible = True
+                except: pass
+
+        def make_nc8(name, build_fn, transform):
+            """Create component, hide existing bodies during build, apply transform."""
             occ  = root.occurrences.addNewComponent(adsk.core.Matrix3D.create())
             comp = occ.component
             comp.name = name
-            build_fn(comp)
-            if bore_mm > 0: _add_bore_to(bore_mm, comp)
-            _place_gear(occ, rot_angle, rot_axis, pcx, 0.0)
+            hid  = _hide_all()
+            try:
+                build_fn(comp)
+            except Exception:
+                pass
+            if bore_mm > 0:
+                _add_bore_to(bore_mm, comp)
+            _show_all(hid)
+            occ.transform2 = transform
             try: design.snapshots.add()
             except Exception: pass
             return occ
 
-        # SideGears first (more stable as first components in Fusion)
-        make_assembled('SideGear_R', sd, -mt.pi/2, 'Y', pcx_s_cm)   # +Z axis
-        make_assembled('SideGear_L', sd,  mt.pi/2, 'Y', pcx_s_cm)   # -Z axis
-        # SpiderGears
-        sp_angles = [0.0, mt.pi, mt.pi/2, -mt.pi/2]  # +X, -X, +Z_rot, -Z_rot
-        sp_axes   = ['Y',  'Y',   'Z',    'Z']
-        for i in range(n_spider):
-            make_assembled('SpiderGear_' + str(i+1), sp, sp_angles[i], sp_axes[i], pcx_sp_cm)
+        # ── Pre-compute the four base transforms ─────────────────────────────
 
-        # Ring Gear + Drive Pinion
+        # t_sp : SpiderGear_1 — NC8 gear 2 (rotcon)
+        t_sp = adsk.core.Matrix3D.create()
+        t_sp.setToRotation(-aconico_sp, adsk.core.Vector3D.create(0, 1, 0),
+                            adsk.core.Point3D.create(rf_sp / 10.0, 0, 0))
+
+        # t_sd : SideGear_R — NC8 gear 1 (moveAndRotateBevel)
+        t_sd = adsk.core.Matrix3D.create()
+        t_sd.setToRotation(-aconico_s, adsk.core.Vector3D.create(0, 1, 0),
+                            adsk.core.Point3D.create(rf_s / 10.0, 0, 0))
+        t_sd.translation = adsk.core.Vector3D.create(tx_s, 0.0, tz_s)
+
+        def mirror180y(t_base):
+            """Return  R180Y(cx) × t_base  — mirrors a transform through the
+               differential centre on the Y-axis."""
+            R = adsk.core.Matrix3D.create()
+            R.setToRotation(mt.pi, adsk.core.Vector3D.create(0, 1, 0),
+                             adsk.core.Point3D.create(cx, 0, 0))
+            R.transformBy(t_base)   # R = R × t_base
+            return R
+
+        # ── Build gears ──────────────────────────────────────────────────────
+        # SideGear_R first (first-component artefact is least visible on it)
+        occ_sr = make_nc8('SideGear_R', sd, t_sd)
+        try: occ_sr.component.bRepBodies.item(0).isVisible = False  # hide like NC8
+        except Exception: pass
+
+        # SpiderGear_1 — NC8 rotcon position
+        make_nc8('SpiderGear_1', sp, t_sp)
+
+        # SpiderGear_2 — mirror of SpiderGear_1
+        make_nc8('SpiderGear_2', sp, mirror180y(t_sp))
+
+        # SideGear_L — mirror of SideGear_R
+        make_nc8('SideGear_L', sd, mirror180y(t_sd))
+
+        # Restore SideGear_R visibility (NC8 pattern)
+        try: occ_sr.component.bRepBodies.item(0).isVisible = True
+        except Exception: pass
+
+        # Extra spider gears (n_spider = 4)
+        for i in range(2, n_spider):
+            angle = mt.pi / 2.0 + (i - 2) * mt.pi  # 90°, 270°
+            Rn = adsk.core.Matrix3D.create()
+            Rn.setToRotation(angle, adsk.core.Vector3D.create(0, 1, 0),
+                              adsk.core.Point3D.create(cx, 0, 0))
+            Rn.transformBy(t_sp)
+            make_nc8('SpiderGear_' + str(i + 1), sp, Rn)
+
+        # Ring Gear + Drive Pinion — NC8 pair, offset in Y to clear internal gears
         if ring_params is not None:
             (rf_rg, x_rg, y_rg, x2_rg, y2_rg, aok_rg, Ttda_rg, ra_rg,
              rf_dp, x_dp, y_dp, x2_dp, y2_dp, aok_dp, Ttda_dp, ra_dp,
              rp_rg, rp_dp) = ring_params
-            pcx_rg_cm = _puntocon_x(m, z_ring, z_pinion_drive)
-            pcx_dp_cm = _puntocon_x(m, z_pinion_drive, z_ring)
+            aconico_rg = mt.atan(float(z_ring) / float(z_pinion_drive))
+            aconico_dp = mt.atan(float(z_pinion_drive) / float(z_ring))
+            tx_rg = (ra_dp + ra_rg)/10.0 + (
+                    (rp_rg - 1.25*m*mt.cos(aconico_rg)) - rf_rg*mt.cos(aconico_rg))/10.0
+            tz_rg = -rf_rg * mt.sin(aconico_rg) / 10.0
+            y_off = (ra_rg + ra_s) / 10.0 + 1.0  # cm — clear of internal gears
 
-            def rg(c): _build_one_bevel(x_rg, y_rg, x2_rg, y2_rg,
-                                         z_ring, z_pinion_drive, rp_rg, rp_dp,
-                                         rf_rg, ra_rg, Ttda_rg, aok_rg, m, c)
-            def dp(c): _build_one_bevel(x_dp, y_dp, x2_dp, y2_dp,
-                                         z_pinion_drive, z_ring, rp_dp, rp_rg,
-                                         rf_dp, ra_dp, Ttda_dp, aok_dp, m, c)
+            # Drive Pinion: NC8 gear 2 (rotcon) + Y offset
+            t_dp2 = adsk.core.Matrix3D.create()
+            t_dp2.setToRotation(-aconico_dp, adsk.core.Vector3D.create(0, 1, 0),
+                                 adsk.core.Point3D.create(rf_dp / 10.0, 0, 0))
+            cur = t_dp2.translation
+            t_dp2.translation = adsk.core.Vector3D.create(cur.x, y_off, cur.z)
 
-            # Ring gear: +Z axis (same as SideGear but larger, wraps around)
-            make_assembled('RingGear',    rg, -mt.pi/2, 'Y', pcx_rg_cm)
-            # Drive Pinion: +Y axis (90 deg from spider gears, perpendicular to ring)
-            make_assembled('DrivePinion', dp,  mt.pi/2, 'Z', pcx_dp_cm)
+            # Ring Gear: NC8 gear 1 (moveAndRotateBevel) + Y offset
+            t_rg2 = adsk.core.Matrix3D.create()
+            t_rg2.setToRotation(-aconico_rg, adsk.core.Vector3D.create(0, 1, 0),
+                                  adsk.core.Point3D.create(rf_rg / 10.0, 0, 0))
+            t_rg2.translation = adsk.core.Vector3D.create(tx_rg, y_off, tz_rg)
+
+            def rg(c): _build_one_bevel(x_rg,y_rg,x2_rg,y2_rg,z_ring,z_pinion_drive,
+                                         rp_rg,rp_dp,rf_rg,ra_rg,Ttda_rg,aok_rg,m,c)
+            def dp(c): _build_one_bevel(x_dp,y_dp,x2_dp,y2_dp,z_pinion_drive,z_ring,
+                                         rp_dp,rp_rg,rf_dp,ra_dp,Ttda_dp,aok_dp,m,c)
+            occ_rg2 = make_nc8('RingGear', rg, t_rg2)
+            try: occ_rg2.component.bRepBodies.item(0).isVisible = False
+            except Exception: pass
+            make_nc8('DrivePinion', dp, t_dp2)
+            try: occ_rg2.component.bRepBodies.item(0).isVisible = True
+            except Exception: pass
 
     else:
         # ── EXPLODED MODE: gears spaced in a row along X ─────────────────────
@@ -645,17 +738,19 @@ def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
     total = n_spider + 2 + (2 if ring_params else 0)
     sp_mm = round(spacing * 10, 1)
     ui.messageBox(
-        'Diferansiyel Takimi Tamamlandi!\n\n'
-        '  Modul       : ' + str(round(m, 2))       + ' mm\n'
-        '  Yanak  z1   : ' + str(z_side)             + ' dis  (r=' + str(round(rp_s,  1)) + 'mm)\n'
-        '  Uydu   z2   : ' + str(z_spider)           + ' dis  (r=' + str(round(rp_sp, 1)) + 'mm)\n'
-        '  Baski acisi : ' + str(round(radToDeg(ap), 1)) + ' deg\n'
-        '  Ao           : ' + str(round(Ao, 1))      + ' mm\n'
-        + ('  Ring  z     : ' + str(z_ring)           + ' dis\n'
-           '  Pinion z    : ' + str(z_pinion_drive)   + ' dis\n' if ring_params else '') +
-        '\n  TOPLAM ' + str(total) + ' PARCA — X boyunca ' + str(sp_mm) + 'mm aralikla dizildi\n'
-        '  Kesisme yok. Assembly icin Fusion360 Joint kullanin.',
-        'Diferansiyel Disli Uretici')
+        'Differential Gear Set Complete!\n\n'
+        '  Module       : ' + str(round(m, 2))       + ' mm\n'
+        '  Side Gear z1 : ' + str(z_side)             + ' teeth  (r=' + str(round(rp_s,  1)) + 'mm)\n'
+        '  Spider    z2 : ' + str(z_spider)           + ' teeth  (r=' + str(round(rp_sp, 1)) + 'mm)\n'
+        '  Pressure Ang : ' + str(round(radToDeg(ap), 1)) + ' deg\n'
+        '  Cone dist Ao : ' + str(round(Ao, 1))      + ' mm\n'
+        + ('  Ring Gear z  : ' + str(z_ring)           + ' teeth\n'
+           '  Drive Pinion : ' + str(z_pinion_drive)   + ' teeth\n' if ring_params else '') +
+        '\n  TOTAL: ' + str(total) + ' parts'
+        + (' — Assembled (NC8 layout)' if assembled else
+           ' — Exploded (' + str(sp_mm) + 'mm spacing, no overlap)') +
+        '\n  Use Fusion 360 Joint to constrain the assembly.',
+        'Differential Gear Generator')
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

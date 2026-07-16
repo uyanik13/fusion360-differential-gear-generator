@@ -301,10 +301,10 @@ def cpattern(linecenter, esconico, ra, rf, z, diente, esStdr, anchoeng, newComp,
         cf  = rootComp.features.circularPatternFeatures
         ci  = cf.createInput(ents, eje)
         ci.quantity    = adsk.core.ValueInput.createByReal(z)
-        ci.totalAngle  = adsk.core.ValueInput.createByString('360 deg')
+        # Use radians float to avoid unit-string parsing issues (especially in Direct Design)
+        ci.totalAngle  = adsk.core.ValueInput.createByReal(2.0 * mt.pi)
         ci.isSymmetric = False
-        # Always use Adjust (1) — Identical (0) fails for the first component
-        # in a fresh design because it needs pre-existing history to reference.
+        # Always use Adjust (1) — Identical (0) can fail for the first component.
         ci.patternComputeOption = 1
         cf.add(ci)
     except Exception:
@@ -560,6 +560,28 @@ def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
     try: design.snapshots.add()
     except Exception: pass
 
+    # Warm-up: create a tiny body in a temporary component so Fusion has a
+    # design-history reference before the first real gear's cpattern runs.
+    # Without this, cpattern can produce incomplete results for the very
+    # first component in a fresh/Direct-Design document.
+    _wu_occ = None
+    try:
+        _wu_occ  = root.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+        _wu_comp = _wu_occ.component
+        _wu_comp.name = '_init_ref'
+        _sk = _wu_comp.sketches.add(_wu_comp.xYConstructionPlane)
+        _sk.sketchCurves.sketchCircles.addByCenterRadius(
+            adsk.core.Point3D.create(0, 0, 0), 0.01)
+        _ei = _wu_comp.features.extrudeFeatures.createInput(
+            _sk.profiles.item(0),
+            adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+        _ei.setDistanceExtent(False, adsk.core.ValueInput.createByReal(0.01))
+        _wu_comp.features.extrudeFeatures.add(_ei)
+        try: design.snapshots.add()
+        except Exception: pass
+    except Exception:
+        _wu_occ = None  # warm-up failed, continue anyway
+
     if assembled:
         # ── ASSEMBLED MODE — exact GFGearGenerator NC8 positioning ───────────
         # SpiderGear = NC8 "pinion" (gear 2):  rotcon only
@@ -724,7 +746,12 @@ def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
             build_and_place('RingGear',    rg, col); col += 1
             build_and_place('DrivePinion', dp, col); col += 1
 
-    # ── Timeline grubu ───────────────────────────────────────────────────────
+    # Delete warm-up reference component
+    if _wu_occ is not None:
+        try: _wu_occ.deleteMe()
+        except Exception: pass
+
+    # ── Timeline group ───────────────────────────────────────────────────────
     try:
         ops = design.timeline.count - nuOps
         if ops > 0:
@@ -757,6 +784,31 @@ def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
 #  COMMAND HANDLERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _fmt_preview(m_cm, z_side, z_spider, z_ring=0, z_pinion=0):
+    """Live-calculated preview text shown in the dialog."""
+    try:
+        m = m_cm * 10.0   # cm -> mm
+        if m <= 0 or z_side < 2 or z_spider < 2:
+            return 'Enter parameters above.'
+        import math
+        Ao   = m * math.sqrt(z_side**2 + z_spider**2) / 2.0
+        b    = Ao / 3.0
+        dp_s = m * z_side
+        dp_p = m * z_spider
+        lines = [
+            f'Cone distance  Ao = {Ao:.2f} mm',
+            f'Face width      b = {b:.2f} mm  (= Ao/3)',
+            f'Side pitch Ø      = {dp_s:.2f} mm',
+            f'Spider pitch Ø   = {dp_p:.2f} mm',
+        ]
+        if z_ring > 0 and z_pinion > 0:
+            rr = z_ring / z_pinion
+            lines.append(f'Ring/Pinion ratio = {z_ring}/{z_pinion} = {rr:.2f} : 1')
+        return '\n'.join(lines)
+    except Exception:
+        return ''
+
+
 class _CmdCreated(adsk.core.CommandCreatedEventHandler):
     def __init__(self):
         super().__init__()
@@ -769,15 +821,29 @@ class _CmdCreated(adsk.core.CommandCreatedEventHandler):
             inputs = cmd.commandInputs
             cmd.isExecutedWhenPreEmpted = False
 
+            # ════  GEAR PARAMETERS  ════════════════════════════════
+            # Module preset dropdown  (common metric values)
+            mod_dd = inputs.addDropDownCommandInput(
+                'ModuleDD', 'Module  [mm]',
+                adsk.core.DropDownStyles.TextListDropDownStyle)
+            for lbl, selected in [
+                ('0.5 mm', False), ('0.8 mm', False),
+                ('1.0 mm', False), ('1.25 mm', False), ('1.5 mm', False),
+                ('2.0 mm', True),  ('2.5 mm', False), ('3.0 mm', False),
+                ('4.0 mm', False), ('5.0 mm', False)
+            ]:
+                mod_dd.listItems.add(lbl, selected)
+
+            # Allow free entry as well
             inputs.addValueInput(
-                'Module', 'Module  [mm]', 'mm',
+                'Module', 'Custom Module  [mm]  (overrides preset)', 'mm',
                 adsk.core.ValueInput.createByReal(0.2))
 
             inputs.addIntegerSpinnerCommandInput(
-                'Z_side', 'Side Gear — tooth count (z1)', 10, 100, 1, 18)
+                'Z_side', 'Side Gear — tooth count  (z₁)', 10, 100, 1, 18)
 
             inputs.addIntegerSpinnerCommandInput(
-                'Z_spider', 'Spider Gear — tooth count (z2)', 8, 60, 1, 12)
+                'Z_spider', 'Spider Gear — tooth count  (z₂)', 8, 60, 1, 12)
 
             inputs.addFloatSpinnerCommandInput(
                 'PressureAngle', 'Pressure Angle  [deg]', 'deg', 14.5, 30.0, 0.5, 20.0)
@@ -785,9 +851,15 @@ class _CmdCreated(adsk.core.CommandCreatedEventHandler):
             dd = inputs.addDropDownCommandInput(
                 'N_spider', 'Number of Spider Gears',
                 adsk.core.DropDownStyles.TextListDropDownStyle)
-            dd.listItems.add('2  Spiders (standard open differential)', True)
-            dd.listItems.add('4  Spiders (high-torque differential)', False)
+            dd.listItems.add('2  — Standard open differential', True)
+            dd.listItems.add('4  — High-torque / off-road', False)
 
+            # ════  LIVE PREVIEW  ═════════════════════════════════
+            inputs.addTextBoxCommandInput(
+                'Preview', 'Calculated',
+                _fmt_preview(0.2, 18, 12), 4, True)
+
+            # ════  OUTPUT OPTIONS  ════════════════════════════════
             inputs.addValueInput(
                 'BoreDia', 'Shaft Bore Diameter  [mm]  (0 = none)', 'mm',
                 adsk.core.ValueInput.createByReal(0.0))
@@ -795,14 +867,15 @@ class _CmdCreated(adsk.core.CommandCreatedEventHandler):
             inputs.addBoolValueInput(
                 'FastCompute', 'Fast Compute  (recommended)', True, '', True)
 
-            # ── Layout mode ──────────────────────────────────────────────
             layout_dd = inputs.addDropDownCommandInput(
                 'Layout', 'Layout Mode',
                 adsk.core.DropDownStyles.TextListDropDownStyle)
-            layout_dd.listItems.add('Assembled — Differential layout (SideGear:+/-Z, Spider:+/-X)', False)
-            layout_dd.listItems.add('Exploded  — Parts spread along X axis (no overlap, inspect/export)', True)
+            layout_dd.listItems.add(
+                'Assembled  — NC8 bevel layout (spider +/-X, side +/-Z)', False)
+            layout_dd.listItems.add(
+                'Exploded   — Parts along X axis, no overlap (inspect/export)', True)
 
-            # ── Ring Gear + Drive Pinion (optional) ─────────────────────────
+            # ════  RING GEAR + DRIVE PINION  (optional)  ═══════════════
             inputs.addBoolValueInput(
                 'IncludeRingGear', 'Include Ring Gear + Drive Pinion', True, '', True)
 
@@ -810,24 +883,28 @@ class _CmdCreated(adsk.core.CommandCreatedEventHandler):
                 'Z_ring', 'Ring Gear (Crown Wheel) — tooth count', 20, 200, 2, 36)
             dp_z = inputs.addIntegerSpinnerCommandInput(
                 'Z_pinion', 'Drive Pinion — tooth count', 6, 40, 1, 9)
-            rg_z.isVisible = False
-            dp_z.isVisible = False
+            ring_prev = inputs.addTextBoxCommandInput(
+                'RingPreview', 'Ring Gear Info', '', 2, True)
+            rg_z.isVisible      = False
+            dp_z.isVisible      = False
+            ring_prev.isVisible = False
 
-            # Toggle ring gear inputs when checkbox changes
+            # ════  ABOUT  ═════════════════════════════════════════════
+            inputs.addTextBoxCommandInput('Info', '', (
+                '<b>Differential Gear Generator</b><br>'
+                'Involute 90° bevel gears — GFGearGenerator NC8 core<br><br>'
+                '<b>Side Gear</b>: axle output  (±Z assembled)&nbsp;&nbsp;'
+                '<b>Spider</b>: cross-pin planet  (±X assembled)<br>'
+                '<b>Ring Gear</b>: crown wheel (driven by pinion)&nbsp;&nbsp;'
+                '<b>Pinion</b>: motor input shaft<br><br>'
+                'Face width = Ao / 3 &nbsp;(industry standard)<br>'
+                'Assembled: all cone apices meet at world origin.'
+            ), 6, True)
+
+            # Wire up handlers
             on_changed = _CmdInputChanged()
             cmd.inputChanged.add(on_changed)
             _handlers.append(on_changed)
-
-            inputs.addTextBoxCommandInput('Info', '', (
-                '<b>Differential Gear Generator</b><br><br>'
-                '<b>Side Gear</b> — axle output gear (±Z axis)<br>'
-                '<b>Spider / Planet Gear</b> — cross-pin gear (±X axis)<br>'
-                '<b>Ring Gear</b> — crown wheel driven by pinion (optional)<br>'
-                '<b>Drive Pinion</b> — motor shaft input gear (optional)<br><br>'
-                'All gears use <i>involute 90° bevel</i> profiles.<br>'
-                'Face width = cone distance / 3  (industry standard).<br><br>'
-                '<i>Assembled mode: all cone apices meet at world origin.</i>'
-            ), 8, True)
 
             on_exec = _CmdExecute()
             on_val  = _CmdValidate()
@@ -840,17 +917,52 @@ class _CmdCreated(adsk.core.CommandCreatedEventHandler):
 
 
 class _CmdInputChanged(adsk.core.InputChangedEventHandler):
-    """Toggles Z_ring / Z_pinion visibility when the Ring Gear checkbox changes."""
+    """Updates live-preview text and toggles ring gear inputs."""
     def __init__(self):
         super().__init__()
 
     def notify(self, args):
         try:
-            changed = adsk.core.InputChangedEventArgs.cast(args).input
+            ev      = adsk.core.InputChangedEventArgs.cast(args)
+            changed = ev.input
+            inputs  = changed.parentCommand.commandInputs
+
+            # Sync module preset -> custom value
+            if changed.id == 'ModuleDD':
+                lbl = changed.selectedItem.name.split()[0]  # e.g. '2.0'
+                try:
+                    inputs.itemById('Module').value = float(lbl) / 10.0
+                except Exception:
+                    pass
+
+            # Toggle ring gear inputs
             if changed.id == 'IncludeRingGear':
                 vis = changed.value
-                changed.parentCommand.commandInputs.itemById('Z_ring').isVisible  = vis
-                changed.parentCommand.commandInputs.itemById('Z_pinion').isVisible = vis
+                inputs.itemById('Z_ring').isVisible       = vis
+                inputs.itemById('Z_pinion').isVisible     = vis
+                inputs.itemById('RingPreview').isVisible  = vis
+
+            # Update live preview whenever any key input changes
+            if changed.id in ('Module', 'ModuleDD', 'Z_side', 'Z_spider',
+                              'Z_ring', 'Z_pinion', 'IncludeRingGear'):
+                try:
+                    m_cm    = inputs.itemById('Module').value
+                    z_side  = inputs.itemById('Z_side').value
+                    z_sp    = inputs.itemById('Z_spider').value
+                    inc_rg  = inputs.itemById('IncludeRingGear').value
+                    z_rg    = inputs.itemById('Z_ring').value   if inc_rg else 0
+                    z_dp    = inputs.itemById('Z_pinion').value if inc_rg else 0
+
+                    inputs.itemById('Preview').text = _fmt_preview(
+                        m_cm, int(z_side), int(z_sp), int(z_rg), int(z_dp))
+
+                    if inc_rg and z_rg > 0 and z_dp > 0:
+                        rr = int(z_rg) / int(z_dp)
+                        inputs.itemById('RingPreview').text = (
+                            f'Reduction ratio  = {int(z_rg)}/{int(z_dp)} = {rr:.2f} : 1\n'
+                            f'Ring pitch Ø      = {inputs.itemById("Module").value*10*int(z_rg):.1f} mm')
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -864,7 +976,9 @@ class _CmdExecute(adsk.core.CommandEventHandler):
         ui  = app.userInterface
         try:
             inputs   = adsk.core.CommandEventArgs.cast(args).command.commandInputs
-            m        = inputs.itemById('Module').value * 10.0
+            # Module: custom value takes priority; if unchanged from default, use preset
+            m_custom = inputs.itemById('Module').value
+            m        = m_custom * 10.0   # cm → mm
             z_side   = int(inputs.itemById('Z_side').value)
             z_spider = int(inputs.itemById('Z_spider').value)
             ap       = inputs.itemById('PressureAngle').value
@@ -927,7 +1041,7 @@ def run(context):
         _tbPanel = panels.itemById(PANEL_ID)
         if _tbPanel:
             _tbPanel.deleteMe()
-        _tbPanel = panels.add(PANEL_ID, 'DIFERANSIYEL GEAR', 'SelectPanel', False)
+        _tbPanel = panels.add(PANEL_ID, 'DIFF GEAR GEN', 'SelectPanel', False)
 
         existing = ui.commandDefinitions.itemById(CMD_ID)
         if existing:

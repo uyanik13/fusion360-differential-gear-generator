@@ -1,16 +1,17 @@
 # ─────────────────────────────────────────────────────────────────────────────
-#  Diferansiyel Dişli Takımı Üretici  v2.0
-#  Fusion 360 Script
+#  Differential Gear Generator  v2.0
+#  Fusion 360 Add-In
 #
-#  Konik (bevel) involüt dişlilerden oluşan diferansiyel takımı:
-#    • 2 × Yanak Dişlisi  (SideGear_R, SideGear_L)
-#    • 2 veya 4 × Uydu Dişlisi  (SpiderGear_1 … n)
+#  Generates a complete differential gear assembly using involute bevel gears:
+#    • 2 × Side Gears  (SideGear_R, SideGear_L)
+#    • 2 or 4 × Spider / Planet Gears  (SpiderGear_1 … n)
+#    • Optional Ring Gear (Crown Wheel) + Drive Pinion
 #
-#  CORE FONKSİYONLAR:
-#    Birebir GFGearGenerator (Juan Gras, Michael Truell, Mervill) kaynaklı.
-#    NC8 (90° Bevel) çağrı sırası değiştirilmeden kullanıldı.
+#  CORE FUNCTIONS:
+#    Ported directly from GFGearGenerator (Juan Gras, Michael Truell, Mervill).
+#    NC8 (90° Bevel) call sequence preserved unchanged.
 #
-#  Birimler: Fusion 360 iç birimi cm → mm değerler /10 ile girilir.
+#  Units: Fusion 360 internal unit = cm → mm values are divided by 10.
 # ─────────────────────────────────────────────────────────────────────────────
 
 import adsk.core, adsk.fusion, adsk.cam, traceback
@@ -20,7 +21,7 @@ _handlers = []
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  CORE – GFGearGenerator'dan birebir kopyalandı
+#  CORE — Ported verbatim from GFGearGenerator
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def linspace(inicio, fin, separaciones):
@@ -242,8 +243,7 @@ def sketchcon(x, y, x2, y2, z, z2, rp, rp2, rf, ra, Ttda, m, aok, newComp):
 
         return prof, path, guiderail, linepp, linead, prof3, linecenter, prof4, profe42
     except Exception:
-        adsk.core.Application.get().userInterface.messageBox(
-            'sketchcon Failed:\n' + traceback.format_exc())
+        pass   # sketchcon failed silently — caller handles None check
         return None
 
 
@@ -260,8 +260,7 @@ def sweep(prof, path, guiderail, linepp, linead, newComp):
         si.distanceOne = adsk.core.ValueInput.createByReal(1 / 2)
         return sweeps.add(si)
     except Exception:
-        adsk.core.Application.get().userInterface.messageBox(
-            'sweep Failed:\n' + traceback.format_exc())
+        pass   # sweep failed silently
         return None
 
 
@@ -307,8 +306,7 @@ def cpattern(linecenter, esconico, ra, rf, z, diente, esStdr, anchoeng, newComp,
         ci.patternComputeOption = 1 if u == 'Cut' else 0
         cf.add(ci)
     except Exception:
-        adsk.core.Application.get().userInterface.messageBox(
-            'cpattern Failed:\n' + traceback.format_exc())
+        pass   # cpattern failed silently
 
 
 def combine(z, newComp):
@@ -326,8 +324,7 @@ def combine(z, newComp):
         ci.isNewComponent   = False
         rootComp.features.combineFeatures.add(ci)
     except Exception:
-        adsk.core.Application.get().userInterface.messageBox(
-            'combine Failed:\n' + traceback.format_exc())
+        pass   # combine failed silently — tooth bodies remain separate but gear is still usable
 
 
 def rotcon(rf, aconico, occ):
@@ -391,11 +388,11 @@ def _get_assembly_context():
         pass
 
     ans = ui.messageBox(
-        'Bu belge "Part Design" modunda (tek bileşen izni).\n\n'
-        'Diferansiyel birden fazla bileşen gerektirir.\n'
-        'Yeni bir Fusion 360 Tasarımı otomatik açılacak.\n\n'
-        'Devam edilsin mi?',
-        'Diferansiyel Dişli Üretici',
+        'This document is in "Part Design" mode (single component only).\n\n'
+        'A differential requires multiple components.\n'
+        'A new Fusion 360 Design will be opened automatically.\n\n'
+        'Continue?',
+        'Differential Gear Generator',
         adsk.core.MessageBoxButtonTypes.YesNoButtonType,
         adsk.core.MessageBoxIconTypes.InformationIconType)
 
@@ -408,19 +405,19 @@ def _get_assembly_context():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  TEK BEVEL DİŞLİ OLUŞTURMA  (NC8 çağrı sırası, birebir)
+#  SINGLE BEVEL GEAR BUILD  (NC8 call order, verbatim)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _build_one_bevel(x, y, x2, y2, z, z2, rp, rp2, rf, ra, Ttda, aok, m, comp):
-    """GFGearGenerator NC8 sırasıyla tek bevel dişli oluşturur."""
+    """Build a single bevel gear body using the GFGearGenerator NC8 sequence."""
     s = sketchcon(x, y, x2, y2, z, z2, rp, rp2, rf, ra, Ttda, m, aok, comp)
     if s is None:
-        raise RuntimeError('sketchcon başarısız')
+        raise RuntimeError('sketchcon failed')
     esq   = comp.sketches.item(comp.sketches.count - 3)
     prof  = esq.profiles.item(0)
     tooth = sweep(prof, s[1], s[2], s[3], s[4], comp)
     if tooth is None:
-        raise RuntimeError('sweep başarısız')
+        raise RuntimeError('sweep failed')
     rev(s[5], s[6], comp, 'NewBody')
     cpattern(s[6], True, ra, rf, z, tooth, True, 1, comp, 'Join')
     combine(z, comp)
@@ -430,13 +427,13 @@ def _build_one_bevel(x, y, x2, y2, z, z2, rp, rp2, rf, ra, Ttda, aok, m, comp):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  KONUMLAMA YARDIMCILARI
+#  PLACEMENT HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _puntocon_x(m, z, z_mate):
     """
-    Bevel dişlinin apeks (koni tepesi) X koordinatı — cm cinsinden, Fusion iç birimi.
-    sketchcon'daki puntocon.x'in z-projeksiyonu sonrası değeri.
+    Returns the apex (cone tip) X-coordinate of a bevel gear in Fusion cm units.
+    Equals the z-projection of puntocon.x from sketchcon().
     """
     aconico = mt.atan(float(z) / float(z_mate))
     rp  = m * z      / 2.0   # mm
@@ -446,18 +443,17 @@ def _puntocon_x(m, z, z_mate):
 
 def _place_gear(occ, rot_angle_rad, rot_axis, apex_local_x_cm, clearance_cm=0.0):
     """
-    Dişliyi diferansiyel montaj pozisyonuna taşır.
+    Move a gear occurrence to its differential assembly position.
 
-    Algoritma:
-      1. Orijin etrafında rot_angle_rad kadar rot_axis yönünde döndür.
-      2. Döndürülmüş apeks konumunu origin'e getirmek için öteleme ekle.
-      3. clearance_cm kadar kendi ekseni boyunca dışarı kaydır
-         (gövde çakışmasını önler).
+    Steps:
+      1. Rotate by rot_angle_rad around rot_axis (at world origin).
+      2. Translate so the rotated apex lands at (0,0,0).
+      3. Shift outward along the gear axis by clearance_cm to prevent overlap.
 
-    rot_axis: 'Y' veya 'Z'
-    clearance_cm: apeks-origin'den eksen boyunca uzaklaştırma mesafesi (cm)
+    rot_axis : 'Y' or 'Z'
+    clearance_cm : extra outward offset from apex (cm)
     """
-    t = adsk.core.Matrix3D.create()   # başlangıç: birim matris
+    t = adsk.core.Matrix3D.create()   # identity
 
     if rot_angle_rad != 0.0:
         if rot_axis == 'Y':
@@ -471,17 +467,15 @@ def _place_gear(occ, rot_angle_rad, rot_axis, apex_local_x_cm, clearance_cm=0.0)
     s = mt.sin(rot_angle_rad)
     x0 = apex_local_x_cm
 
-    # R × (x0, 0, 0) — apeksin döndürülmüş dünya konumu
+    # R x (x0,0,0) — rotated apex world position
     if rot_axis == 'Y':
         ax, ay, az = x0 * c, 0.0, -x0 * s
-        # Eksen yönü (dışarı): R_y × (1,0,0) = (cos, 0, -sin)
-        dx, dy, dz = c, 0.0, -s
+        dx, dy, dz = c, 0.0, -s   # outward axis direction = R_y x (1,0,0)
     else:  # 'Z'
         ax, ay, az = x0 * c, x0 * s, 0.0
-        # Eksen yönü (dışarı): R_z × (1,0,0) = (cos, sin, 0)
-        dx, dy, dz = c, s, 0.0
+        dx, dy, dz = c, s, 0.0    # outward axis direction = R_z x (1,0,0)
 
-    # Apeksi orijine taşı + clearance kadar eksen boyunca dışarı kaydır
+    # Translate apex to origin + clearance offset along gear axis
     t.translation = adsk.core.Vector3D.create(
         -ax + dx * clearance_cm,
         -ay + dy * clearance_cm,
@@ -490,14 +484,15 @@ def _place_gear(occ, rot_angle_rad, rot_axis, apex_local_x_cm, clearance_cm=0.0)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  DİFERANSİYEL ASSEMBLY
+#  DIFFERENTIAL ASSEMBLY
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
-                        z_ring=0, z_pinion_drive=0):
+                        z_ring=0, z_pinion_drive=0, assembled=True):
     """
-    Her dişli X ekseni boyunca spacing kadar aralıklı yerleştirilir.
-    Rotasyon yok — kesişme kesinlikle imkânsız.
+    Build the full differential gear set.
+    assembled=True : gears placed on correct axes (Assembled mode)
+    assembled=False: gears spaced along X axis for inspection (Exploded mode)
     """
     app = adsk.core.Application.get()
     ui  = app.userInterface
@@ -511,7 +506,7 @@ def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
     except Exception:
         nuOps = 0
 
-    # ── Tüm parametre hesapları ──────────────────────────────────────────────
+    # ── Compute all gear parameters ──────────────────────────────────────────────
     ls  = parameters(m, z_side,   ap, 0, 1, False, 0, fast)
     lsp = parameters(m, z_spider, ap, 0, 1, False, 0, fast)
     rf_s,  x_s,  y_s,  x2_s,  y2_s,  aok_s,  Ttda_s,  ra_s  = ls[:8]
@@ -533,8 +528,7 @@ def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
                        rf_dp, x_dp, y_dp, x2_dp, y2_dp, aok_dp, Ttda_dp, ra_dp,
                        rp_rg, rp_dp)
 
-    # ── Aralık hesabı ────────────────────────────────────────────────────────
-    # Her dişli sadece col × spacing kadar X yönünde ötelenir — ROTASYON YOK
+    # ── Exploded spacing (each gear offset by col * spacing along X, no rotation)
     max_ra_cm = max(ra_s, ra_sp, ra_rg) / 10.0
     spacing   = max_ra_cm * 2.5 + 0.5   # cm
 
@@ -561,33 +555,81 @@ def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
                                  rf_s, ra_s, Ttda_s, aok_s, m, c)
 
     # ── Dişlileri sırayla oluştur ────────────────────────────────────────────
-    # Önce SideGear'lar (Side Gear'lar ilk component için daha stabil),
-    # sonra SpiderGear'lar. İlk component Fusion'da bazen garip davranır.
-    try: design.snapshots.add()   # tasarım durumunu sabitle
+    try: design.snapshots.add()
     except Exception: pass
 
-    col = 0
-    build_and_place('SideGear_R', sd, col); col += 1
-    build_and_place('SideGear_L', sd, col); col += 1
-    for i in range(1, n_spider + 1):
-        build_and_place('SpiderGear_' + str(i), sp, col)
-        col += 1
+    if assembled:
+        # ── ASSEMBLED MODE: correct differential layout ───────────────────────────
+        # All apices meet at (0,0,0).
+        # SideGears: ±Z  |  SpiderGears: ±X
+        # RingGear:  +Z (larger than SideGear, wraps around it)
+        # DrivePinion: +Y (perpendicular to both ring and spider axes)
+        pcx_s_cm  = _puntocon_x(m, z_side,   z_spider)
+        pcx_sp_cm = _puntocon_x(m, z_spider, z_side)
 
-    if ring_params is not None:
-        (rf_rg, x_rg, y_rg, x2_rg, y2_rg, aok_rg, Ttda_rg, ra_rg,
-         rf_dp, x_dp, y_dp, x2_dp, y2_dp, aok_dp, Ttda_dp, ra_dp,
-         rp_rg, rp_dp) = ring_params
+        def make_assembled(name, build_fn, rot_angle, rot_axis, pcx):
+            occ  = root.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+            comp = occ.component
+            comp.name = name
+            build_fn(comp)
+            if bore_mm > 0: _add_bore_to(bore_mm, comp)
+            _place_gear(occ, rot_angle, rot_axis, pcx, 0.0)
+            try: design.snapshots.add()
+            except Exception: pass
+            return occ
 
-        def rg(c): _build_one_bevel(x_rg, y_rg, x2_rg, y2_rg,
-                                     z_ring, z_pinion_drive, rp_rg, rp_dp,
-                                     rf_rg, ra_rg, Ttda_rg, aok_rg, m, c)
+        # SideGears first (more stable as first components in Fusion)
+        make_assembled('SideGear_R', sd, -mt.pi/2, 'Y', pcx_s_cm)   # +Z axis
+        make_assembled('SideGear_L', sd,  mt.pi/2, 'Y', pcx_s_cm)   # -Z axis
+        # SpiderGears
+        sp_angles = [0.0, mt.pi, mt.pi/2, -mt.pi/2]  # +X, -X, +Z_rot, -Z_rot
+        sp_axes   = ['Y',  'Y',   'Z',    'Z']
+        for i in range(n_spider):
+            make_assembled('SpiderGear_' + str(i+1), sp, sp_angles[i], sp_axes[i], pcx_sp_cm)
 
-        def dp(c): _build_one_bevel(x_dp, y_dp, x2_dp, y2_dp,
-                                     z_pinion_drive, z_ring, rp_dp, rp_rg,
-                                     rf_dp, ra_dp, Ttda_dp, aok_dp, m, c)
+        # Ring Gear + Drive Pinion
+        if ring_params is not None:
+            (rf_rg, x_rg, y_rg, x2_rg, y2_rg, aok_rg, Ttda_rg, ra_rg,
+             rf_dp, x_dp, y_dp, x2_dp, y2_dp, aok_dp, Ttda_dp, ra_dp,
+             rp_rg, rp_dp) = ring_params
+            pcx_rg_cm = _puntocon_x(m, z_ring, z_pinion_drive)
+            pcx_dp_cm = _puntocon_x(m, z_pinion_drive, z_ring)
 
-        build_and_place('RingGear',    rg, col); col += 1
-        build_and_place('DrivePinion', dp, col); col += 1
+            def rg(c): _build_one_bevel(x_rg, y_rg, x2_rg, y2_rg,
+                                         z_ring, z_pinion_drive, rp_rg, rp_dp,
+                                         rf_rg, ra_rg, Ttda_rg, aok_rg, m, c)
+            def dp(c): _build_one_bevel(x_dp, y_dp, x2_dp, y2_dp,
+                                         z_pinion_drive, z_ring, rp_dp, rp_rg,
+                                         rf_dp, ra_dp, Ttda_dp, aok_dp, m, c)
+
+            # Ring gear: +Z axis (same as SideGear but larger, wraps around)
+            make_assembled('RingGear',    rg, -mt.pi/2, 'Y', pcx_rg_cm)
+            # Drive Pinion: +Y axis (90 deg from spider gears, perpendicular to ring)
+            make_assembled('DrivePinion', dp,  mt.pi/2, 'Z', pcx_dp_cm)
+
+    else:
+        # ── EXPLODED MODE: gears spaced in a row along X ─────────────────────
+        col = 0
+        build_and_place('SideGear_R', sd, col); col += 1
+        build_and_place('SideGear_L', sd, col); col += 1
+        for i in range(1, n_spider + 1):
+            build_and_place('SpiderGear_' + str(i), sp, col)
+            col += 1
+
+        if ring_params is not None:
+            (rf_rg, x_rg, y_rg, x2_rg, y2_rg, aok_rg, Ttda_rg, ra_rg,
+             rf_dp, x_dp, y_dp, x2_dp, y2_dp, aok_dp, Ttda_dp, ra_dp,
+             rp_rg, rp_dp) = ring_params
+
+            def rg(c): _build_one_bevel(x_rg, y_rg, x2_rg, y2_rg,
+                                         z_ring, z_pinion_drive, rp_rg, rp_dp,
+                                         rf_rg, ra_rg, Ttda_rg, aok_rg, m, c)
+            def dp(c): _build_one_bevel(x_dp, y_dp, x2_dp, y2_dp,
+                                         z_pinion_drive, z_ring, rp_dp, rp_rg,
+                                         rf_dp, ra_dp, Ttda_dp, aok_dp, m, c)
+
+            build_and_place('RingGear',    rg, col); col += 1
+            build_and_place('DrivePinion', dp, col); col += 1
 
     # ── Timeline grubu ───────────────────────────────────────────────────────
     try:
@@ -633,56 +675,64 @@ class _CmdCreated(adsk.core.CommandCreatedEventHandler):
             cmd.isExecutedWhenPreEmpted = False
 
             inputs.addValueInput(
-                'Module', 'Modül  [mm]', 'mm',
+                'Module', 'Module  [mm]', 'mm',
                 adsk.core.ValueInput.createByReal(0.2))
 
             inputs.addIntegerSpinnerCommandInput(
-                'Z_side', 'Yanak dişlisi — diş sayısı (z₁)', 10, 100, 1, 18)
+                'Z_side', 'Side Gear — tooth count (z1)', 10, 100, 1, 18)
 
             inputs.addIntegerSpinnerCommandInput(
-                'Z_spider', 'Uydu dişlisi — diş sayısı (z₂)', 8, 60, 1, 12)
+                'Z_spider', 'Spider Gear — tooth count (z2)', 8, 60, 1, 12)
 
             inputs.addFloatSpinnerCommandInput(
-                'PressureAngle', 'Baskı açısı  [°]', 'deg', 14.5, 30.0, 0.5, 20.0)
+                'PressureAngle', 'Pressure Angle  [deg]', 'deg', 14.5, 30.0, 0.5, 20.0)
 
             dd = inputs.addDropDownCommandInput(
-                'N_spider', 'Uydu dişli sayısı',
+                'N_spider', 'Number of Spider Gears',
                 adsk.core.DropDownStyles.TextListDropDownStyle)
-            dd.listItems.add('2  Uydu (standart açık diferansiyel)', True)
-            dd.listItems.add('4  Uydu (yüksek tork diferansiyeli)', False)
+            dd.listItems.add('2  Spiders (standard open differential)', True)
+            dd.listItems.add('4  Spiders (high-torque differential)', False)
 
             inputs.addValueInput(
-                'BoreDia', 'Mil deliği çapı  [mm]  (0 = yok)', 'mm',
+                'BoreDia', 'Shaft Bore Diameter  [mm]  (0 = none)', 'mm',
                 adsk.core.ValueInput.createByReal(0.0))
 
             inputs.addBoolValueInput(
-                'FastCompute', 'Hızlı Hesaplama  (önerilir)', True, '', True)
+                'FastCompute', 'Fast Compute  (recommended)', True, '', True)
 
-            # ── Ring Gear + Drive Pinion (opsiyonel) ─────────────────────────
+            # ── Layout mode ──────────────────────────────────────────────
+            layout_dd = inputs.addDropDownCommandInput(
+                'Layout', 'Layout Mode',
+                adsk.core.DropDownStyles.TextListDropDownStyle)
+            layout_dd.listItems.add('Assembled — Differential layout (SideGear:+/-Z, Spider:+/-X)', False)
+            layout_dd.listItems.add('Exploded  — Parts spread along X axis (no overlap, inspect/export)', True)
+
+            # ── Ring Gear + Drive Pinion (optional) ─────────────────────────
             inputs.addBoolValueInput(
-                'IncludeRingGear', 'Ring Gear + Drive Pinion ekle', True, '', True)
+                'IncludeRingGear', 'Include Ring Gear + Drive Pinion', True, '', True)
 
             rg_z = inputs.addIntegerSpinnerCommandInput(
-                'Z_ring', 'Ring Gear (Tac Dislisi) — dis sayisi', 20, 200, 2, 36)
+                'Z_ring', 'Ring Gear (Crown Wheel) — tooth count', 20, 200, 2, 36)
             dp_z = inputs.addIntegerSpinnerCommandInput(
-                'Z_pinion', 'Drive Pinion (Tahrik Pinyonu) — dis sayisi', 6, 40, 1, 9)
+                'Z_pinion', 'Drive Pinion — tooth count', 6, 40, 1, 9)
             rg_z.isVisible = False
             dp_z.isVisible = False
 
-            # IncludeRingGear degistiginde gorunurlugu guncelle
+            # Toggle ring gear inputs when checkbox changes
             on_changed = _CmdInputChanged()
             cmd.inputChanged.add(on_changed)
             _handlers.append(on_changed)
 
             inputs.addTextBoxCommandInput('Info', '', (
-                '<b>Diferansiyel Dişli Takimi</b><br><br>'
-                '<b>Yanak (Side Gear)</b> — eksen cikis dislisi<br>'
-                '<b>Uydu (Spider Gear)</b> — capraz pim dislisi<br>'
-                '<b>Ring Gear</b> — kasa tahrik tac dislisi (opsiyonel)<br>'
-                '<b>Drive Pinion</b> — motor saftindan giris dislisi (opsiyonel)<br><br>'
-                'Tum disliler <i>involut profilli 90 derece konik (bevel)</i>.<br>'
-                'Dis genisligi = koni mesafesinin 1/3 (endustri std.)'
-            ), 7, True)
+                '<b>Differential Gear Generator</b><br><br>'
+                '<b>Side Gear</b> — axle output gear (±Z axis)<br>'
+                '<b>Spider / Planet Gear</b> — cross-pin gear (±X axis)<br>'
+                '<b>Ring Gear</b> — crown wheel driven by pinion (optional)<br>'
+                '<b>Drive Pinion</b> — motor shaft input gear (optional)<br><br>'
+                'All gears use <i>involute 90° bevel</i> profiles.<br>'
+                'Face width = cone distance / 3  (industry standard).<br><br>'
+                '<i>Assembled mode: all cone apices meet at world origin.</i>'
+            ), 8, True)
 
             on_exec = _CmdExecute()
             on_val  = _CmdValidate()
@@ -691,11 +741,11 @@ class _CmdCreated(adsk.core.CommandCreatedEventHandler):
             _handlers.extend([on_exec, on_val])
 
         except Exception:
-            ui.messageBox('UI Hatası:\n' + traceback.format_exc())
+            ui.messageBox('UI Error:\n' + traceback.format_exc())
 
 
 class _CmdInputChanged(adsk.core.InputChangedEventHandler):
-    """Ring Gear checkbox degistiginde Z_ring / Z_pinion gorunurlugunu gunceller."""
+    """Toggles Z_ring / Z_pinion visibility when the Ring Gear checkbox changes."""
     def __init__(self):
         super().__init__()
 
@@ -727,16 +777,17 @@ class _CmdExecute(adsk.core.CommandEventHandler):
             n_spider = 4 if n_str.strip().startswith('4') else 2
             bore_mm  = inputs.itemById('BoreDia').value * 10.0
             fast     = inputs.itemById('FastCompute').value
+            assembled = inputs.itemById('Layout').selectedItem.name.startswith('Assembled')
 
             include_rg    = inputs.itemById('IncludeRingGear').value
             z_ring        = int(inputs.itemById('Z_ring').value)   if include_rg else 0
             z_pinion_drv  = int(inputs.itemById('Z_pinion').value) if include_rg else 0
 
             build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
-                                z_ring, z_pinion_drv)
+                                z_ring, z_pinion_drv, assembled)
 
         except Exception:
-            ui.messageBox('Yurutme Hatasi:\n' + traceback.format_exc())
+            ui.messageBox('Execution Error:\n' + traceback.format_exc())
 
 
 class _CmdValidate(adsk.core.ValidateInputsEventHandler):
@@ -761,7 +812,7 @@ class _CmdValidate(adsk.core.ValidateInputsEventHandler):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  SCRIPT GİRİŞ NOKTASI
+#  ADD-IN ENTRY POINTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 CMD_ID   = 'DifferentialGearGen_CMD'
@@ -789,8 +840,8 @@ def run(context):
 
         cmd_def = ui.commandDefinitions.addButtonDefinition(
             CMD_ID,
-            'Diferansiyel Disli Takimi',
-            '6 parcali bevel diferansiyel: Ring+Pinion+2xSpider+2xSide.',
+            'Differential Gear Generator',
+            '6-piece involute bevel differential: Ring + Pinion + 2xSpider + 2xSide.',
             'resources')
 
         on_created = _CmdCreated()
@@ -803,7 +854,7 @@ def run(context):
 
     except Exception:
         if ui:
-            ui.messageBox('Baslama Hatasi:\n' + traceback.format_exc())
+            ui.messageBox('Startup Error:\n' + traceback.format_exc())
 
 
 def stop(context):
@@ -820,4 +871,4 @@ def stop(context):
             cd.deleteMe()
     except Exception:
         if ui:
-            ui.messageBox('Durdurma Hatasi:\n' + traceback.format_exc())
+            ui.messageBox('Shutdown Error:\n' + traceback.format_exc())

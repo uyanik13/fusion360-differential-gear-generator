@@ -1,0 +1,13 @@
+{
+    "autodeskProduct": "Fusion360",
+    "type": "script",
+    "id": "DifferentialGearGenerator_2026",
+    "author": "Ugur",
+    "description": {
+        "": "Diferansiyel Dişli Takımı Üretici — involüt bevel dişlilerden oluşan tam diferansiyel assembly oluşturur."
+    },
+    "version": "1.0.0",
+    "runOnStartup": false,
+    "supportedOS": "windows|mac",
+    "editEnabled": true
+}

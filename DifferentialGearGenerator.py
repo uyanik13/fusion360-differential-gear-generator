@@ -830,7 +830,7 @@ class _CmdCreated(adsk.core.CommandCreatedEventHandler):
             # ════  LIVE PREVIEW  ═════════════════════════════════
             inputs.addTextBoxCommandInput(
                 'Preview', 'Calculated',
-                _fmt_preview(0.2, 14, 10, 28, 7, 0.40), 4, True)
+                _fmt_preview(0.2, 14, 10, 40, 10, 0.40), 4, True)
 
             # ════  OUTPUT OPTIONS  ════════════════════════════════
             inputs.addValueInput(
@@ -853,9 +853,9 @@ class _CmdCreated(adsk.core.CommandCreatedEventHandler):
                 'IncludeRingGear', 'Include Ring Gear + Drive Pinion', True, '', True)
 
             rg_z = inputs.addIntegerSpinnerCommandInput(
-                'Z_ring', 'Ring Gear (Crown Wheel) — tooth count', 20, 200, 2, 28)
+                'Z_ring', 'Ring Gear (Crown Wheel) — tooth count', 20, 200, 2, 40)
             dp_z = inputs.addIntegerSpinnerCommandInput(
-                'Z_pinion', 'Drive Pinion — tooth count', 6, 40, 1, 7)
+                'Z_pinion', 'Drive Pinion — tooth count', 6, 40, 1, 10)
             ring_prev = inputs.addTextBoxCommandInput(
                 'RingPreview', 'Ring Gear Info', '', 2, True)
             rg_z.isVisible      = False

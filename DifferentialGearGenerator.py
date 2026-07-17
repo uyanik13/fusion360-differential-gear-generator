@@ -840,17 +840,17 @@ class _CmdCreated(adsk.core.CommandCreatedEventHandler):
                 adsk.core.ValueInput.createByReal(0.2))
 
             inputs.addIntegerSpinnerCommandInput(
-                'Z_side', 'Side Gear — tooth count  (z₁)', 10, 100, 1, 18)
+                'Z_side', 'Side Gear — tooth count  (z₁)', 10, 100, 1, 14)
 
             inputs.addIntegerSpinnerCommandInput(
-                'Z_spider', 'Spider Gear — tooth count  (z₂)', 8, 60, 1, 12)
+                'Z_spider', 'Spider Gear — tooth count  (z₂)', 8, 60, 1, 10)
 
             inputs.addFloatSpinnerCommandInput(
                 'PressureAngle', 'Pressure Angle  [deg]', 'deg', 14.5, 30.0, 0.5, 20.0)
 
             # Face width ratio — wider = stronger teeth (important for PLA)
             fw = inputs.addFloatSpinnerCommandInput(
-                'FaceWidthRatio', 'Face Width  (ratio of cone dist Ao)', '', 0.25, 0.45, 0.01, 0.33)
+                'FaceWidthRatio', 'Face Width  (ratio of cone dist Ao)', '', 0.25, 0.45, 0.01, 0.40)
             fw.tooltip = '0.33 = industry std (Ao/3)  |  0.40 = stronger teeth (recommended for PLA)'
 
             dd = inputs.addDropDownCommandInput(
@@ -862,12 +862,12 @@ class _CmdCreated(adsk.core.CommandCreatedEventHandler):
             # ════  LIVE PREVIEW  ═════════════════════════════════
             inputs.addTextBoxCommandInput(
                 'Preview', 'Calculated',
-                _fmt_preview(0.2, 18, 12), 4, True)
+                _fmt_preview(0.2, 14, 10, 28, 7, 0.40), 4, True)
 
             # ════  OUTPUT OPTIONS  ════════════════════════════════
             inputs.addValueInput(
                 'BoreDia', 'Shaft Bore Diameter  [mm]  (0 = none)', 'mm',
-                adsk.core.ValueInput.createByReal(0.0))
+                adsk.core.ValueInput.createByReal(0.4))
 
             inputs.addBoolValueInput(
                 'FastCompute', 'Fast Compute  (recommended)', True, '', True)
@@ -885,9 +885,9 @@ class _CmdCreated(adsk.core.CommandCreatedEventHandler):
                 'IncludeRingGear', 'Include Ring Gear + Drive Pinion', True, '', True)
 
             rg_z = inputs.addIntegerSpinnerCommandInput(
-                'Z_ring', 'Ring Gear (Crown Wheel) — tooth count', 20, 200, 2, 36)
+                'Z_ring', 'Ring Gear (Crown Wheel) — tooth count', 20, 200, 2, 28)
             dp_z = inputs.addIntegerSpinnerCommandInput(
-                'Z_pinion', 'Drive Pinion — tooth count', 6, 40, 1, 9)
+                'Z_pinion', 'Drive Pinion — tooth count', 6, 40, 1, 7)
             ring_prev = inputs.addTextBoxCommandInput(
                 'RingPreview', 'Ring Gear Info', '', 2, True)
             rg_z.isVisible      = False

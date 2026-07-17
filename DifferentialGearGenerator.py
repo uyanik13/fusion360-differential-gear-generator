@@ -359,8 +359,12 @@ def moveAndRotateBevel(x, y, z, occ, aconico, rf):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _add_bore_to(bore_mm, comp):
+    """Cut a shaft bore along the gear's local X axis (the gear rotation axis).
+    The gear body is built with its rotation axis along local-X, so the bore
+    sketch must be on the YZ plane (perpendicular to X)."""
     try:
-        sk = comp.sketches.add(comp.xYConstructionPlane)
+        # yZConstructionPlane is perpendicular to local X → bore along local X axis ✓
+        sk = comp.sketches.add(comp.yZConstructionPlane)
         sk.sketchCurves.sketchCircles.addByCenterRadius(
             adsk.core.Point3D.create(0, 0, 0), bore_mm / 2.0 / 10.0)
         prof = sk.profiles.item(0)
@@ -583,26 +587,22 @@ def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
         _wu_occ = None  # warm-up failed, continue anyway
 
     if assembled:
-        # ── ASSEMBLED MODE — exact GFGearGenerator NC8 positioning ───────────
-        # SpiderGear = NC8 "pinion" (gear 2):  rotcon only
-        # SideGear   = NC8 "wheel"  (gear 1):  moveAndRotateBevel formula
-        # SpiderGear_2 / SideGear_L = 180° mirror around Y at differential center
-        # GFGearGenerator also hides existing bodies before each build to prevent
-        # body-index interference in combine/cpattern — we do the same.
+        # ── ASSEMBLED MODE — axis-based layout with hide/show pattern ────────
+        #
+        # All cone apices meet at world origin.  Each gear sits on its correct axis:
+        #   SideGear_R  +Z  |  SideGear_L  -Z
+        #   SpiderGear_1 +X  |  SpiderGear_2 -X
+        #   SpiderGear_3 +Y  |  SpiderGear_4 -Y  (n=4 only)
+        #   RingGear / DrivePinion offset in Y to keep them clear
+        #
+        # GFGearGenerator pattern: hide all existing bodies before each build
+        # so combine/cpattern body indices stay predictable.
 
-        aconico_s  = mt.atan(float(z_side)   / float(z_spider))
-        aconico_sp = mt.atan(float(z_spider) / float(z_side))
-
-        # NC8 gear-1 (wheel = SideGear) translation formula — direct from NC8 handler
-        tx_s = (ra_sp + ra_s)/10.0 + (
-               (rp_s - 1.25*m*mt.cos(aconico_s)) - rf_s*mt.cos(aconico_s))/10.0
-        tz_s = -rf_s * mt.sin(aconico_s) / 10.0
-
-        # Differential center ≈ rotcon center of SpiderGear
-        cx = rf_sp / 10.0   # cm
+        cl        = m / 10.0   # clearance = 1 module (cm) — small visual gap
+        pcx_s_cm  = _puntocon_x(m, z_side,   z_spider)
+        pcx_sp_cm = _puntocon_x(m, z_spider, z_side)
 
         def _hide_all():
-            """Hide all bodies across all existing occurrences (GFGearGenerator pattern)."""
             hidden = []
             for j in range(root.occurrences.count):
                 for k in range(root.occurrences.item(j).bRepBodies.count):
@@ -613,17 +613,17 @@ def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
                         except: pass
             return hidden
 
-        def _show_all(hidden):
-            for b in hidden:
+        def _show_all(hid):
+            for b in hid:
                 try: b.isVisible = True
                 except: pass
 
-        def make_nc8(name, build_fn, transform):
-            """Create component, hide existing bodies during build, apply transform."""
+        def make_placed(name, build_fn, rot_angle, rot_axis, pcx, clearance):
+            """Build a gear component, hide others during build, place on correct axis."""
             occ  = root.occurrences.addNewComponent(adsk.core.Matrix3D.create())
             comp = occ.component
             comp.name = name
-            hid  = _hide_all()
+            hid = _hide_all()
             try:
                 build_fn(comp)
             except Exception:
@@ -631,62 +631,35 @@ def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
             if bore_mm > 0:
                 _add_bore_to(bore_mm, comp)
             _show_all(hid)
-            occ.transform2 = transform
+            _place_gear(occ, rot_angle, rot_axis, pcx, clearance)
             try: design.snapshots.add()
             except Exception: pass
             return occ
 
-        # ── Pre-compute the four base transforms ─────────────────────────────
-
-        # t_sp : SpiderGear_1 — NC8 gear 2 (rotcon)
-        t_sp = adsk.core.Matrix3D.create()
-        t_sp.setToRotation(-aconico_sp, adsk.core.Vector3D.create(0, 1, 0),
-                            adsk.core.Point3D.create(rf_sp / 10.0, 0, 0))
-
-        # t_sd : SideGear_R — NC8 gear 1 (moveAndRotateBevel)
-        t_sd = adsk.core.Matrix3D.create()
-        t_sd.setToRotation(-aconico_s, adsk.core.Vector3D.create(0, 1, 0),
-                            adsk.core.Point3D.create(rf_s / 10.0, 0, 0))
-        t_sd.translation = adsk.core.Vector3D.create(tx_s, 0.0, tz_s)
-
-        def mirror180y(t_base):
-            """Return  R180Y(cx) × t_base  — mirrors a transform through the
-               differential centre on the Y-axis."""
-            R = adsk.core.Matrix3D.create()
-            R.setToRotation(mt.pi, adsk.core.Vector3D.create(0, 1, 0),
-                             adsk.core.Point3D.create(cx, 0, 0))
-            R.transformBy(t_base)   # R = R × t_base
-            return R
-
-        # ── Build gears ──────────────────────────────────────────────────────
-        # SideGear_R first (first-component artefact is least visible on it)
-        occ_sr = make_nc8('SideGear_R', sd, t_sd)
-        try: occ_sr.component.bRepBodies.item(0).isVisible = False  # hide like NC8
+        # SideGear_R first — first-component warm-up effect least visible here
+        occ_sr = make_placed('SideGear_R', sd, -mt.pi/2, 'Y', pcx_s_cm, cl)
+        try: occ_sr.component.bRepBodies.item(0).isVisible = False
         except Exception: pass
 
-        # SpiderGear_1 — NC8 rotcon position
-        make_nc8('SpiderGear_1', sp, t_sp)
+        # Internal spider gears — ±X axes
+        make_placed('SpiderGear_1', sp,  0.0,    'Y', pcx_sp_cm, cl)   # +X
+        make_placed('SpiderGear_2', sp,  mt.pi,  'Y', pcx_sp_cm, cl)   # -X
 
-        # SpiderGear_2 — mirror of SpiderGear_1
-        make_nc8('SpiderGear_2', sp, mirror180y(t_sp))
+        # SideGear_L — -Z axis
+        make_placed('SideGear_L',  sd,  mt.pi/2, 'Y', pcx_s_cm, cl)   # -Z
 
-        # SideGear_L — mirror of SideGear_R
-        make_nc8('SideGear_L', sd, mirror180y(t_sd))
-
-        # Restore SideGear_R visibility (NC8 pattern)
+        # Restore SideGear_R
         try: occ_sr.component.bRepBodies.item(0).isVisible = True
         except Exception: pass
 
-        # Extra spider gears (n_spider = 4)
-        for i in range(2, n_spider):
-            angle = mt.pi / 2.0 + (i - 2) * mt.pi  # 90°, 270°
-            Rn = adsk.core.Matrix3D.create()
-            Rn.setToRotation(angle, adsk.core.Vector3D.create(0, 1, 0),
-                              adsk.core.Point3D.create(cx, 0, 0))
-            Rn.transformBy(t_sp)
-            make_nc8('SpiderGear_' + str(i + 1), sp, Rn)
+        # Extra spider gears (n=4): ±Y axes
+        if n_spider >= 3:
+            make_placed('SpiderGear_3', sp,  mt.pi/2, 'Z', pcx_sp_cm, cl)  # +Y
+        if n_spider >= 4:
+            make_placed('SpiderGear_4', sp, -mt.pi/2, 'Z', pcx_sp_cm, cl)  # -Y
 
-        # Ring Gear + Drive Pinion — NC8 pair, offset in Y to clear internal gears
+        # ── Ring Gear + Drive Pinion ────────────────────────────────────────
+        # Placed as a proper NC8 90° bevel pair, Y-offset to clear internal gears.
         if ring_params is not None:
             (rf_rg, x_rg, y_rg, x2_rg, y2_rg, aok_rg, Ttda_rg, ra_rg,
              rf_dp, x_dp, y_dp, x2_dp, y2_dp, aok_dp, Ttda_dp, ra_dp,
@@ -698,14 +671,12 @@ def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
             tz_rg = -rf_rg * mt.sin(aconico_rg) / 10.0
             y_off = (ra_rg + ra_s) / 10.0 + 1.0  # cm — clear of internal gears
 
-            # Drive Pinion: NC8 gear 2 (rotcon) + Y offset
             t_dp2 = adsk.core.Matrix3D.create()
             t_dp2.setToRotation(-aconico_dp, adsk.core.Vector3D.create(0, 1, 0),
                                  adsk.core.Point3D.create(rf_dp / 10.0, 0, 0))
             cur = t_dp2.translation
             t_dp2.translation = adsk.core.Vector3D.create(cur.x, y_off, cur.z)
 
-            # Ring Gear: NC8 gear 1 (moveAndRotateBevel) + Y offset
             t_rg2 = adsk.core.Matrix3D.create()
             t_rg2.setToRotation(-aconico_rg, adsk.core.Vector3D.create(0, 1, 0),
                                   adsk.core.Point3D.create(rf_rg / 10.0, 0, 0))
@@ -715,11 +686,30 @@ def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
                                          rp_rg,rp_dp,rf_rg,ra_rg,Ttda_rg,aok_rg,m,c,fw_ratio)
             def dp(c): _build_one_bevel(x_dp,y_dp,x2_dp,y2_dp,z_pinion_drive,z_ring,
                                          rp_dp,rp_rg,rf_dp,ra_dp,Ttda_dp,aok_dp,m,c,fw_ratio)
-            occ_rg2 = make_nc8('RingGear', rg, t_rg2)
+
+            hid = _hide_all()
+            occ_rg2 = root.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+            occ_rg2.component.name = 'RingGear'
+            try: rg(occ_rg2.component)
+            except Exception: pass
+            if bore_mm > 0: _add_bore_to(bore_mm, occ_rg2.component)
+            _show_all(hid)
+            occ_rg2.transform2 = t_rg2
             try: occ_rg2.component.bRepBodies.item(0).isVisible = False
             except Exception: pass
-            make_nc8('DrivePinion', dp, t_dp2)
+            try: design.snapshots.add()
+            except Exception: pass
+
+            hid = _hide_all()
+            occ_dp2 = root.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+            occ_dp2.component.name = 'DrivePinion'
+            try: dp(occ_dp2.component)
+            except Exception: pass
+            _show_all(hid)
+            occ_dp2.transform2 = t_dp2
             try: occ_rg2.component.bRepBodies.item(0).isVisible = True
+            except Exception: pass
+            try: design.snapshots.add()
             except Exception: pass
 
     else:

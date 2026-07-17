@@ -659,57 +659,35 @@ def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
             make_placed('SpiderGear_4', sp, -mt.pi/2, 'Z', pcx_sp_cm, cl)  # -Y
 
         # ── Ring Gear + Drive Pinion ────────────────────────────────────────
-        # Placed as a proper NC8 90° bevel pair, Y-offset to clear internal gears.
+        # Ring gear:   axis +Z (SAME as SideGear_R), apex at origin, no clearance.
+        #              Ring gear outer radius > side gear outer radius → it
+        #              visually WRAPS AROUND the internal differential gears.
+        # Drive pinion: axis +Y — comes in from the "top", clearance keeps it
+        #              just outside the spider-gear envelope.
         if ring_params is not None:
             (rf_rg, x_rg, y_rg, x2_rg, y2_rg, aok_rg, Ttda_rg, ra_rg,
              rf_dp, x_dp, y_dp, x2_dp, y2_dp, aok_dp, Ttda_dp, ra_dp,
              rp_rg, rp_dp) = ring_params
-            aconico_rg = mt.atan(float(z_ring) / float(z_pinion_drive))
-            aconico_dp = mt.atan(float(z_pinion_drive) / float(z_ring))
-            tx_rg = (ra_dp + ra_rg)/10.0 + (
-                    (rp_rg - 1.25*m*mt.cos(aconico_rg)) - rf_rg*mt.cos(aconico_rg))/10.0
-            tz_rg = -rf_rg * mt.sin(aconico_rg) / 10.0
-            y_off = (ra_rg + ra_s) / 10.0 + 1.0  # cm — clear of internal gears
 
-            t_dp2 = adsk.core.Matrix3D.create()
-            t_dp2.setToRotation(-aconico_dp, adsk.core.Vector3D.create(0, 1, 0),
-                                 adsk.core.Point3D.create(rf_dp / 10.0, 0, 0))
-            cur = t_dp2.translation
-            t_dp2.translation = adsk.core.Vector3D.create(cur.x, y_off, cur.z)
-
-            t_rg2 = adsk.core.Matrix3D.create()
-            t_rg2.setToRotation(-aconico_rg, adsk.core.Vector3D.create(0, 1, 0),
-                                  adsk.core.Point3D.create(rf_rg / 10.0, 0, 0))
-            t_rg2.translation = adsk.core.Vector3D.create(tx_rg, y_off, tz_rg)
+            pcx_rg_cm = _puntocon_x(m, z_ring,         z_pinion_drive)
+            pcx_dp_cm = _puntocon_x(m, z_pinion_drive, z_ring)
+            # Pinion offset: push along +Y so it is visible next to the ring gear
+            dp_off = ra_sp / 10.0 + 0.3   # cm (just outside the spider gear)
 
             def rg(c): _build_one_bevel(x_rg,y_rg,x2_rg,y2_rg,z_ring,z_pinion_drive,
                                          rp_rg,rp_dp,rf_rg,ra_rg,Ttda_rg,aok_rg,m,c,fw_ratio)
             def dp(c): _build_one_bevel(x_dp,y_dp,x2_dp,y2_dp,z_pinion_drive,z_ring,
                                          rp_dp,rp_rg,rf_dp,ra_dp,Ttda_dp,aok_dp,m,c,fw_ratio)
 
-            hid = _hide_all()
-            occ_rg2 = root.occurrences.addNewComponent(adsk.core.Matrix3D.create())
-            occ_rg2.component.name = 'RingGear'
-            try: rg(occ_rg2.component)
-            except Exception: pass
-            if bore_mm > 0: _add_bore_to(bore_mm, occ_rg2.component)
-            _show_all(hid)
-            occ_rg2.transform2 = t_rg2
-            try: occ_rg2.component.bRepBodies.item(0).isVisible = False
-            except Exception: pass
-            try: design.snapshots.add()
+            # Ring gear – same axis (+Z) as SideGear_R, surrounding the internal gears
+            occ_rg = make_placed('RingGear',    rg, -mt.pi/2, 'Y', pcx_rg_cm, 0.0)
+            try: occ_rg.component.bRepBodies.item(0).isVisible = False
             except Exception: pass
 
-            hid = _hide_all()
-            occ_dp2 = root.occurrences.addNewComponent(adsk.core.Matrix3D.create())
-            occ_dp2.component.name = 'DrivePinion'
-            try: dp(occ_dp2.component)
-            except Exception: pass
-            _show_all(hid)
-            occ_dp2.transform2 = t_dp2
-            try: occ_rg2.component.bRepBodies.item(0).isVisible = True
-            except Exception: pass
-            try: design.snapshots.add()
+            # Drive pinion – axis +Y (perpendicular to ring gear, offset outward)
+            make_placed('DrivePinion', dp,  mt.pi/2, 'Z', pcx_dp_cm, dp_off)
+
+            try: occ_rg.component.bRepBodies.item(0).isVisible = True
             except Exception: pass
 
     else:
@@ -857,7 +835,7 @@ class _CmdCreated(adsk.core.CommandCreatedEventHandler):
             # ════  OUTPUT OPTIONS  ════════════════════════════════
             inputs.addValueInput(
                 'BoreDia', 'Shaft Bore Diameter  [mm]  (0 = none)', 'mm',
-                adsk.core.ValueInput.createByReal(0.4))
+                adsk.core.ValueInput.createByReal(0.0))
 
             inputs.addBoolValueInput(
                 'FastCompute', 'Fast Compute  (recommended)', True, '', True)

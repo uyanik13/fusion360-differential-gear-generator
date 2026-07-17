@@ -147,7 +147,7 @@ def parameters(m, z, ap, ah, anchoeng, bool, X, fastcompute, normal_system=False
             xl2, yl2, xrot2, yrot2, x3rot, y3rot, aph, rb, rva, rvf)
 
 
-def sketchcon(x, y, x2, y2, z, z2, rp, rp2, rf, ra, Ttda, m, aok, newComp):
+def sketchcon(x, y, x2, y2, z, z2, rp, rp2, rf, ra, Ttda, m, aok, newComp, fw_ratio=0.333):
     try:
         aconico  = mt.atan(z / z2)
         app      = adsk.core.Application.get()
@@ -203,7 +203,7 @@ def sketchcon(x, y, x2, y2, z, z2, rp, rp2, rf, ra, Ttda, m, aok, newComp):
         path      = newComp.features.createPath(linepp, False)
         guiderail = newComp.features.createPath(linead, False)
         Ao = mt.sqrt((rp**2) + (rp2**2))
-        F  = Ao / 3
+        F  = Ao * fw_ratio    # configurable face width (default = Ao/3 industry std)
 
         sketch3 = rootComp.sketches.add(rootComp.xYConstructionPlane)
         l3      = sketch3.sketchCurves.sketchLines
@@ -410,9 +410,9 @@ def _get_assembly_context():
 #  SINGLE BEVEL GEAR BUILD  (NC8 call order, verbatim)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _build_one_bevel(x, y, x2, y2, z, z2, rp, rp2, rf, ra, Ttda, aok, m, comp):
+def _build_one_bevel(x, y, x2, y2, z, z2, rp, rp2, rf, ra, Ttda, aok, m, comp, fw_ratio=0.333):
     """Build a single bevel gear body using the GFGearGenerator NC8 sequence."""
-    s = sketchcon(x, y, x2, y2, z, z2, rp, rp2, rf, ra, Ttda, m, aok, comp)
+    s = sketchcon(x, y, x2, y2, z, z2, rp, rp2, rf, ra, Ttda, m, aok, comp, fw_ratio)
     if s is None:
         raise RuntimeError('sketchcon failed')
     esq   = comp.sketches.item(comp.sketches.count - 3)
@@ -490,7 +490,7 @@ def _place_gear(occ, rot_angle_rad, rot_axis, apex_local_x_cm, clearance_cm=0.0)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
-                        z_ring=0, z_pinion_drive=0, assembled=True):
+                        z_ring=0, z_pinion_drive=0, assembled=True, fw_ratio=0.333):
     """
     Build the full differential gear set.
     assembled=True : gears placed on correct axes (Assembled mode)
@@ -550,11 +550,11 @@ def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
 
     def sp(c): _build_one_bevel(x_sp, y_sp, x2_sp, y2_sp,
                                  z_spider, z_side, rp_sp, rp_s,
-                                 rf_sp, ra_sp, Ttda_sp, aok_sp, m, c)
+                                 rf_sp, ra_sp, Ttda_sp, aok_sp, m, c, fw_ratio)
 
     def sd(c): _build_one_bevel(x_s, y_s, x2_s, y2_s,
                                  z_side, z_spider, rp_s, rp_sp,
-                                 rf_s, ra_s, Ttda_s, aok_s, m, c)
+                                 rf_s, ra_s, Ttda_s, aok_s, m, c, fw_ratio)
 
     # ── Dişlileri sırayla oluştur ────────────────────────────────────────────
     try: design.snapshots.add()
@@ -712,9 +712,9 @@ def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
             t_rg2.translation = adsk.core.Vector3D.create(tx_rg, y_off, tz_rg)
 
             def rg(c): _build_one_bevel(x_rg,y_rg,x2_rg,y2_rg,z_ring,z_pinion_drive,
-                                         rp_rg,rp_dp,rf_rg,ra_rg,Ttda_rg,aok_rg,m,c)
+                                         rp_rg,rp_dp,rf_rg,ra_rg,Ttda_rg,aok_rg,m,c,fw_ratio)
             def dp(c): _build_one_bevel(x_dp,y_dp,x2_dp,y2_dp,z_pinion_drive,z_ring,
-                                         rp_dp,rp_rg,rf_dp,ra_dp,Ttda_dp,aok_dp,m,c)
+                                         rp_dp,rp_rg,rf_dp,ra_dp,Ttda_dp,aok_dp,m,c,fw_ratio)
             occ_rg2 = make_nc8('RingGear', rg, t_rg2)
             try: occ_rg2.component.bRepBodies.item(0).isVisible = False
             except Exception: pass
@@ -738,10 +738,10 @@ def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
 
             def rg(c): _build_one_bevel(x_rg, y_rg, x2_rg, y2_rg,
                                          z_ring, z_pinion_drive, rp_rg, rp_dp,
-                                         rf_rg, ra_rg, Ttda_rg, aok_rg, m, c)
+                                         rf_rg, ra_rg, Ttda_rg, aok_rg, m, c, fw_ratio)
             def dp(c): _build_one_bevel(x_dp, y_dp, x2_dp, y2_dp,
                                          z_pinion_drive, z_ring, rp_dp, rp_rg,
-                                         rf_dp, ra_dp, Ttda_dp, aok_dp, m, c)
+                                         rf_dp, ra_dp, Ttda_dp, aok_dp, m, c, fw_ratio)
 
             build_and_place('RingGear',    rg, col); col += 1
             build_and_place('DrivePinion', dp, col); col += 1
@@ -784,7 +784,7 @@ def build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
 #  COMMAND HANDLERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _fmt_preview(m_cm, z_side, z_spider, z_ring=0, z_pinion=0):
+def _fmt_preview(m_cm, z_side, z_spider, z_ring=0, z_pinion=0, fw_ratio=0.333):
     """Live-calculated preview text shown in the dialog."""
     try:
         m = m_cm * 10.0   # cm -> mm
@@ -792,12 +792,12 @@ def _fmt_preview(m_cm, z_side, z_spider, z_ring=0, z_pinion=0):
             return 'Enter parameters above.'
         import math
         Ao   = m * math.sqrt(z_side**2 + z_spider**2) / 2.0
-        b    = Ao / 3.0
+        b    = Ao * fw_ratio
         dp_s = m * z_side
         dp_p = m * z_spider
         lines = [
             f'Cone distance  Ao = {Ao:.2f} mm',
-            f'Face width      b = {b:.2f} mm  (= Ao/3)',
+            f'Face width      b = {b:.2f} mm  (= Ao x {fw_ratio:.2f})',
             f'Side pitch Ø      = {dp_s:.2f} mm',
             f'Spider pitch Ø   = {dp_p:.2f} mm',
         ]
@@ -848,6 +848,11 @@ class _CmdCreated(adsk.core.CommandCreatedEventHandler):
             inputs.addFloatSpinnerCommandInput(
                 'PressureAngle', 'Pressure Angle  [deg]', 'deg', 14.5, 30.0, 0.5, 20.0)
 
+            # Face width ratio — wider = stronger teeth (important for PLA)
+            fw = inputs.addFloatSpinnerCommandInput(
+                'FaceWidthRatio', 'Face Width  (ratio of cone dist Ao)', '', 0.25, 0.45, 0.01, 0.33)
+            fw.tooltip = '0.33 = industry std (Ao/3)  |  0.40 = stronger teeth (recommended for PLA)'
+
             dd = inputs.addDropDownCommandInput(
                 'N_spider', 'Number of Spider Gears',
                 adsk.core.DropDownStyles.TextListDropDownStyle)
@@ -897,9 +902,13 @@ class _CmdCreated(adsk.core.CommandCreatedEventHandler):
                 '<b>Spider</b>: cross-pin planet  (±X assembled)<br>'
                 '<b>Ring Gear</b>: crown wheel (driven by pinion)&nbsp;&nbsp;'
                 '<b>Pinion</b>: motor input shaft<br><br>'
-                'Face width = Ao / 3 &nbsp;(industry standard)<br>'
-                'Assembled: all cone apices meet at world origin.'
-            ), 6, True)
+                '<b>For PLA printing:</b><br>'
+                '• Module ≥ 2.0 mm (larger teeth = stronger, less friction heat)<br>'
+                '• Face Width ratio 0.38–0.42 (wider teeth = more contact area)<br>'
+                '• 4+ walls, 40% gyroid infill, 0.15 mm layer height<br>'
+                '• Print gear axis horizontal for best layer bonding<br>'
+                '• PLA glass transition ≈60°C — lubricate gears to reduce heat'
+            ), 8, True)
 
             # Wire up handlers
             on_changed = _CmdInputChanged()
@@ -944,7 +953,7 @@ class _CmdInputChanged(adsk.core.InputChangedEventHandler):
 
             # Update live preview whenever any key input changes
             if changed.id in ('Module', 'ModuleDD', 'Z_side', 'Z_spider',
-                              'Z_ring', 'Z_pinion', 'IncludeRingGear'):
+                              'Z_ring', 'Z_pinion', 'IncludeRingGear', 'FaceWidthRatio'):
                 try:
                     m_cm    = inputs.itemById('Module').value
                     z_side  = inputs.itemById('Z_side').value
@@ -952,9 +961,10 @@ class _CmdInputChanged(adsk.core.InputChangedEventHandler):
                     inc_rg  = inputs.itemById('IncludeRingGear').value
                     z_rg    = inputs.itemById('Z_ring').value   if inc_rg else 0
                     z_dp    = inputs.itemById('Z_pinion').value if inc_rg else 0
+                    fw      = inputs.itemById('FaceWidthRatio').value
 
                     inputs.itemById('Preview').text = _fmt_preview(
-                        m_cm, int(z_side), int(z_sp), int(z_rg), int(z_dp))
+                        m_cm, int(z_side), int(z_sp), int(z_rg), int(z_dp), fw)
 
                     if inc_rg and z_rg > 0 and z_dp > 0:
                         rr = int(z_rg) / int(z_dp)
@@ -987,13 +997,14 @@ class _CmdExecute(adsk.core.CommandEventHandler):
             bore_mm  = inputs.itemById('BoreDia').value * 10.0
             fast     = inputs.itemById('FastCompute').value
             assembled = inputs.itemById('Layout').selectedItem.name.startswith('Assembled')
+            fw_ratio  = inputs.itemById('FaceWidthRatio').value
 
             include_rg    = inputs.itemById('IncludeRingGear').value
             z_ring        = int(inputs.itemById('Z_ring').value)   if include_rg else 0
             z_pinion_drv  = int(inputs.itemById('Z_pinion').value) if include_rg else 0
 
             build_differential(m, z_side, z_spider, ap, fast, n_spider, bore_mm,
-                                z_ring, z_pinion_drv, assembled)
+                                z_ring, z_pinion_drv, assembled, fw_ratio)
 
         except Exception:
             ui.messageBox('Execution Error:\n' + traceback.format_exc())
